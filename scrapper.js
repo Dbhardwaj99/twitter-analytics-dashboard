@@ -1,19 +1,59 @@
 const puppeteer = require("puppeteer");
+const fs = require('fs');
+const path = require('path');
+
+const SESSION_FILE_PATH = path.resolve(__dirname, 'session.json');
+
+async function saveSessionData(page) {
+  const cookies = await page.cookies();
+  const localStorage = await page.evaluate(() => {
+    const json = {};
+    for (const key in localStorage) {
+      json[key] = localStorage.getItem(key);
+    }
+    return json;
+  });
+
+  fs.writeFileSync(SESSION_FILE_PATH, JSON.stringify({ cookies, localStorage }));
+}
+
+async function loadSessionData(page) {
+  if (fs.existsSync(SESSION_FILE_PATH)) {
+    const sessionData = JSON.parse(fs.readFileSync(SESSION_FILE_PATH, 'utf-8'));
+
+    if (sessionData.cookies) {
+      await page.setCookie(...sessionData.cookies);
+    }
+
+    if (sessionData.localStorage) {
+      await page.evaluate((localStorageData) => {
+        for (const key in localStorageData) {
+          localStorage.setItem(key, localStorageData[key]);
+        }
+      }, sessionData.localStorage);
+    }
+  }
+}
 
 async function scrapeData() {
   const browser = await puppeteer.launch({ headless: false });
   const page = await browser.newPage();
   await page.setViewport({ width: 1200, height: 720 });
 
+  await loadSessionData(page);
+
   await page.goto("https://x.com/i/flow/login", { waitUntil: "networkidle2" });
 
-  console.log("Please log in manually in the opened browser window.");
+  const loginSuccess = await page.waitForSelector(".r-1ny4l3l .css-175oi2r .css-175oi2r .r-adyw6z span", { timeout: 0 })
+    .then(() => true)
+    .catch(() => false);
 
-  await page.waitForSelector(
-    ".r-1ny4l3l .css-175oi2r .css-175oi2r .r-adyw6z span",
-    { timeout: 0 }
-  );
-  console.log("Login successful, proceeding with scraping...");
+  if (!loginSuccess) {
+    console.log('Please log in manually in the opened browser window.');
+    await page.waitForSelector(".r-1ny4l3l .css-175oi2r .css-175oi2r .r-adyw6z span", { timeout: 0 });
+    console.log('Login successful, proceeding with scraping...');
+    await saveSessionData(page);
+  }
 
   await page.goto("https://x.com/i/professionals", { waitUntil: "networkidle2" });
 
